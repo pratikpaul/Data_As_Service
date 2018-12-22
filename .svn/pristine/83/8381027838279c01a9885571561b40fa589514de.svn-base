@@ -1,0 +1,28 @@
+[main]
+jdbcRealm = org.apache.shiro.realm.jdbc.JdbcRealm
+jdbcRealm.permissionsLookupEnabled = false
+
+jdbcRealm.authenticationQuery = SELECT password FROM daas_users WHERE user_id = ?
+#jdbcRealm.userRolesQuery = SELECT role FROM users WHERE username = ?
+#ds.serverName = 13.82.55.156
+#ds.user = dmf
+#ds.password = dmf2016
+ds = com.mysql.jdbc.jdbc2.optional.MysqlDataSource
+ds.serverName = 198.168.0.31
+ds.user = root
+ds.password = 6yhnZAQ!
+ds.databaseName = appUsers
+jdbcRealm.dataSource = $ds
+
+# Use Built-in Chache Manager
+builtInCacheManager = org.apache.shiro.cache.MemoryConstrainedCacheManager
+securityManager.cacheManager = $builtInCacheManager
+securityManager.realms = $jdbcRealm
+
+# session Management
+sessionManager = org.apache.shiro.web.session.mgt.DefaultWebSessionManager
+sessionManager.globalSessionTimeout = 1800000
+securityManager.sessionManager = $sessionManager
+
+[users]
+[roles]

@@ -1,0 +1,19 @@
+w<?xml version="1.0"  encoding="UTF-8"?>
+<!DOCTYPE Configure PUBLIC "-//Mort Bay Consulting//DTD Configure//EN" "http://www.eclipse.org/jetty/configure.dtd">
+
+<Configure class="org.eclipse.jetty.webapp.WebAppContext">
+	<New id="DSTest" class="org.eclipse.jetty.plus.jndi.Resource">
+		<Arg></Arg>
+		<Arg>jdbc/DSTest</Arg>
+		<Arg>
+			<New class="com.mysql.jdbc.jdbc2.optional.MysqlConnectionPoolDataSource">
+<!-- 				<Set name="driverClassName">com.mysql.jdbc.Driver</Set> -->
+				<Set name="Url">jdbc:mysql://CentOS7-1:3306/daas</Set>
+				<Set name="User">dmf</Set>
+				<Set name="Password">dmf2016</Set>
+				<!--<Set name="Url">jdbc:mysql://198.168.0.31:3306/daas</Set> <Set name="User">root</Set> 
+					<Set name="Password">6yhnZAQ!</Set> -->
+			</New>
+		</Arg>
+	</New>
+</Configure>

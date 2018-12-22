@@ -1,0 +1,218 @@
+package com.self.dataAsService.util
+
+import org.json._
+import java.util.{ List => JList }
+import scala.collection.mutable.ListBuffer
+import com.self.dataAsService.Drive
+import java.io.PrintWriter
+import com.self.dataAsService.QuickView
+import scalikejdbc.WrappedResultSet
+import com.self.dataAsService.DownloadUrlPath
+import org.json4s.JsonAST.JValue
+import org.json4s.DefaultFormats
+import org.json4s._
+import org.json4s.JsonDSL._
+import org.json4s.jackson.JsonMethods._
+import java.util.Date
+import java.text.SimpleDateFormat
+import com.typesafe.config.ConfigFactory
+import com.self.dataAsService.DataServicesValues
+import com.self.dataAsService.UserInfo
+
+object CommonProcesses {
+
+  implicit val formats = DefaultFormats
+  val conf = ConfigFactory.load
+
+  def jsonToCsvConverter(json: String, delimiter: String): String = {
+    val jArr = new JSONArray(json);
+    val columns = new ListBuffer[String]()
+    val colJArr = jArr.getJSONObject(0).names
+    for (i <- 0 until colJArr.length) {
+      columns += colJArr.getString(i)
+    }
+    var fileContent = columns.foldLeft("")((c, r) => { c + r + delimiter }).dropRight(1) + "\n"
+
+    for (i <- 0 until jArr.length) {
+      val jObj = jArr.getJSONObject(i)
+      fileContent = columns.foldLeft(fileContent)((c, r) => { c + jObj.getString(r) + delimiter }).dropRight(1) + "\n"
+      //       val jObj.
+    }
+
+    fileContent
+  }
+
+  def processForDownloadData(key: String, subCatId: String, delimiter: String, selectColumns: String) = {
+    val report = Drive.getReport(key)
+
+    var query = report._1
+
+    query += " and"
+
+    query += " sub_category = ?"
+
+    val v: JValue = Drive.runQuickViewSingleParamReport(query, subCatId, report._2)
+    println("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%" + compact(render(v)) + " And The Selected Columns Are " + selectColumns)
+
+    val js = compact(render(v)).toString
+    val json_str = s"""{\"schema_table_info\":$js}"""
+    val json = parse(json_str)
+    val downloadData: QuickView = json.extract[QuickView]
+
+    val db = downloadData.schema_table_info(0).hive_database_name
+    val table = downloadData.schema_table_info(0).hbase_table
+
+    val fin_query = s"SELECT ${selectColumns} from " + db + "." + table
+
+    val fin_map = (rs: WrappedResultSet) => {
+
+      val str = new StringBuilder
+      str ++= "{ "
+      for (i <- 1 until rs.metaData.getColumnCount) {
+        //( "id" -> rs.string( "id" ) )~( "name" -> rs.string( "name" ) )
+        str ++= "\"" + rs.metaData.getColumnName(i) + "\" : \"" + rs.string(rs.metaData.getColumnName(i)) + "\","
+      }
+      str ++= "\"" + rs.metaData.getColumnName(rs.metaData.getColumnCount) + "\" : \"" + rs.string(rs.metaData.getColumnName(rs.metaData.getColumnCount)) + "\" }"
+
+      parse(str.toString.replaceAll("\n", " "))
+    }
+    val v2: Option[JValue] = Drive.runParamLessHiveReport(fin_query, fin_map, db)
+    val fileName = table + "_" + new Date().getTime + ".csv"
+    val filePath = conf.getString("downloadDataPath.path") + fileName
+    val filePathToUpdate = conf.getString("downloadDataPath.pathToUpdate") + fileName
+    println("########****************" + filePath)
+    val pw = new PrintWriter(filePath)
+    v2 match {
+      case Some(v) => { pw.write(jsonToCsvConverter(compact(render(v)), delimiter)) }
+      case None => { pw.write(compact(render("{}"))) }
+    }
+
+    pw.close
+
+    Drive.postUpdate(DownloadUrlPath(filePathToUpdate))
+
+  }
+
+  def ritualBeforeInsert(userInfo: UserInfo) = {
+    println("****************INSIDE RITUAL BEFORE INSERT*******************")
+    val user = userInfo
+    for (j <- 0 until user.service_details.length) {
+
+      var is_encrypted = ""
+      user.service_details(j).is_encrypted match {
+        case None => is_encrypted = "false"
+        case Some(v) => {
+          v match {
+            case "1" => is_encrypted = "true"
+            case "0" => is_encrypted = "false"
+            case x: String => is_encrypted = x
+          }
+        }
+      }
+
+      var is_header = ""
+
+      user.service_details(j).is_header match {
+        case None => is_header = "false"
+        case Some(v) => {
+          v match {
+            case "1" => is_header = "true"
+            case "0" => is_header = "false"
+            case x: String => is_header = x
+          }
+        }
+      }
+
+      var data_service_id = ""
+
+      user.service_details(j).data_service_id match {
+        case None => data_service_id = "1"
+        case Some(v) => data_service_id = v
+      }
+
+      var simpleDateFormat: SimpleDateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+      var date: Date = simpleDateFormat.parse(user.service_details(j).start_date);
+
+      var dateValue = new SimpleDateFormat("yyyy-MM-dd").format(date)
+
+      var concated_elem: String = ""
+      var count: Int = 0
+
+      while (count < user.service_details(j).selected_columns.length) {
+        concated_elem = s"${concated_elem}|${user.service_details(j).selected_columns(count).id}"
+        count += 1
+      }
+      concated_elem = s"${concated_elem}|"
+      concated_elem = concated_elem.drop(1)
+
+      val insertValues = DataServicesValues(user.user_id.toLong, user.service_details(j).core_category_id.toLong, user.service_details(j).core_subcategory_id.toLong, user.service_details(j).metadata_core_id.toLong, user.service_details(j).status.map(_.toInt), user.service_details(j).service_type, dateValue, user.service_details(j).row_delimiter, user.service_details(j).column_delimiter, Some(is_encrypted.toBoolean), Some(is_header.toBoolean), "", concated_elem, "I", data_service_id.toInt, user.service_details(j).data_service_name, user.service_details(j).share_type, user.service_details(j).is_ftp_share.map(_.toBoolean), user.service_details(j).is_database_share.map(_.toBoolean), user.service_details(j).ftp_share_path, user.service_details(j).ftp_username, user.service_details(j).ftp_password, user.service_details(j).database_type, user.service_details(j).database_server_ip, user.service_details(j).database_instance_name, user.service_details(j).database_username, user.service_details(j).database_password, user.service_details(j).filter)
+
+      println()
+      println("INSERT VALUES ===>" + insertValues)
+      //Drive.postRunReport( sql, columnList )
+      Drive.postRunInsert(insertValues)
+
+    }
+
+    var selectCols = ""
+
+    user.service_details.foreach {
+      _.selected_columns.foreach { selectCols += _.name + "," }
+    }
+
+    selectCols = selectCols.dropRight(1)
+
+    user.service_details.foreach { x =>
+      x.column_delimiter match {
+        case "PIPE" => { processForDownloadData("downloadData", x.core_subcategory_id, "|", selectCols) }
+        case "DPIPE" => { processForDownloadData("downloadData", x.core_subcategory_id, "||", selectCols) }
+        case "COMMA" => { processForDownloadData("downloadData", x.core_subcategory_id, ",", selectCols) }
+        case "SEMICOLON" => { processForDownloadData("downloadData", x.core_subcategory_id, ";", selectCols) }
+        case "TAB" => { processForDownloadData("downloadData", x.core_subcategory_id, "	", selectCols) }
+      }
+    }
+  }
+
+  def getFinalJsonWithSchemaAndColumnName(v: List[JValue]): String = {
+    val jValueMap = scala.collection.mutable.Map[String, List[JValue]]()
+    var finalJson = "["
+
+    val jVMap = v.foldLeft(scala.collection.mutable.Map[String, List[JValue]]())((c, r) => {
+      val key = r.children(4).asInstanceOf[JString].s
+      if (!c.contains(key)) {
+        c += (key -> List[JValue](r))
+      } else {
+        val ll = c(key) :+ r
+        c += (key -> ll)
+      }
+    })
+
+    jVMap.foreach(x => {
+      val check = x._2.foldLeft(false)((c, r) => {
+        val jO: JObject = r.asInstanceOf[JObject]
+        c || jO.obj(5)._2.asInstanceOf[JBool].value
+        //            c || jO.obj(5)._2.asInstanceOf[JString].s.toLowerCase.toBoolean
+      }) //.children(4).asInstanceOf[JString].s.toBoolean }).toString
+      finalJson += "{\"schemaName\" : \"" + x._1 + "\"," +
+        "\"checked\" : " + check + ",\"columnName\": ["
+
+      finalJson = x._2.foldLeft(finalJson)((c, r) => { c + compact(render(r)) + "," })
+      if (!x._2.isEmpty) {
+        finalJson = finalJson.dropRight(1) + "]},"
+      } else {
+        finalJson = finalJson + "]},"
+      }
+    })
+
+    finalJson match {
+      case "[" => { finalJson += "]" }
+      case _ => { finalJson = finalJson.dropRight(1) + "]" }
+    }
+
+    //        finalJson = finalJson.dropRight(1) + "]"
+
+    finalJson
+  }
+
+}
